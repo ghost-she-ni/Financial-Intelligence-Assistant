@@ -13,6 +13,12 @@ def build_context_block(retrieval_results_df: pd.DataFrame) -> str:
 
     for rank, row in enumerate(retrieval_results_df.itertuples(index=False), start=1):
         section_lines = ""
+        if hasattr(row, "document_source") and getattr(row, "document_source", None):
+            section_lines += f"document_source: {row.document_source}\n"
+        if hasattr(row, "file_name") and getattr(row, "file_name", None):
+            section_lines += f"file_name: {row.file_name}\n"
+        if hasattr(row, "document_type") and getattr(row, "document_type", None):
+            section_lines += f"document_type: {row.document_type}\n"
         if hasattr(row, "section_group") and getattr(row, "section_group", None):
             section_lines += f"section_group: {row.section_group}\n"
         if hasattr(row, "section_title") and getattr(row, "section_title", None):

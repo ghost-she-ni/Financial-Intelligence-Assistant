@@ -16,6 +16,10 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.agent.workflow import run_financial_analyst_agent
 from src.extraction.knowledge_base import get_knowledge_artifacts
 from src.generation.rag_answer import generate_rag_answer
+from src.ingestion.uploaded_documents import (
+    UploadedFilePayload,
+    prepare_uploaded_runtime_corpus,
+)
 
 CHUNKS_PATH = PROJECT_ROOT / "data" / "processed" / "chunks.parquet"
 CHUNK_EMBEDDINGS_PATH = PROJECT_ROOT / "data" / "embeddings" / "chunk_embeddings.parquet"
@@ -23,9 +27,15 @@ QUERY_EMBEDDINGS_PATH = PROJECT_ROOT / "data" / "embeddings" / "query_embeddings
 LLM_CACHE_PATH = PROJECT_ROOT / "data" / "cache" / "llm_responses.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "outputs" / "streamlit"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADED_RUNTIME_DIR = OUTPUT_DIR / "uploaded_corpora"
+UPLOADED_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_LLM_MODEL = "gpt-4o-mini"
+UPLOAD_WIDGET_KEY_STATE = "uploaded_documents_widget_nonce"
+UPLOAD_CLEAR_NOTICE_STATE = "uploaded_documents_cleared_notice"
+CHAT_HISTORY_STATE = "chat_history"
+CHAT_CLEAR_NOTICE_STATE = "chat_cleared_notice"
 
 SAMPLE_QUESTIONS = [
     "What are Adobe's main risk factors in 2024?",
@@ -76,12 +86,65 @@ def apply_filters(
     return filtered_df.reset_index(drop=True)
 
 
+def ensure_upload_widget_state() -> None:
+    """Initialize Streamlit session keys used by the upload widget."""
+    if UPLOAD_WIDGET_KEY_STATE not in st.session_state:
+        st.session_state[UPLOAD_WIDGET_KEY_STATE] = 0
+    if UPLOAD_CLEAR_NOTICE_STATE not in st.session_state:
+        st.session_state[UPLOAD_CLEAR_NOTICE_STATE] = False
+
+
+def ensure_chat_state() -> None:
+    """Initialize Streamlit session keys used by the chat interface."""
+    if CHAT_HISTORY_STATE not in st.session_state:
+        st.session_state[CHAT_HISTORY_STATE] = []
+    if CHAT_CLEAR_NOTICE_STATE not in st.session_state:
+        st.session_state[CHAT_CLEAR_NOTICE_STATE] = False
+
+
+def build_uploaded_file_payloads(uploaded_files: list[Any] | None) -> list[UploadedFilePayload]:
+    """Convert Streamlit uploaded files into plain payloads for the ingestion helper."""
+    payloads: list[UploadedFilePayload] = []
+    for uploaded_file in uploaded_files or []:
+        file_bytes = uploaded_file.getvalue()
+        if not file_bytes:
+            continue
+        payloads.append(
+            UploadedFilePayload(
+                file_name=uploaded_file.name,
+                content=file_bytes,
+            )
+        )
+    return payloads
+
+
+def format_optional_year(value: object) -> str:
+    if value is None or pd.isna(value) or value in {"", 0}:
+        return "N/A"
+    return str(int(value))
+
+
+def build_uploaded_files_summary_df(uploaded_files: list[Any] | None) -> pd.DataFrame:
+    """Build a lightweight dataframe describing uploaded files."""
+    rows: list[dict[str, Any]] = []
+    for uploaded_file in uploaded_files or []:
+        size_bytes = int(getattr(uploaded_file, "size", 0) or 0)
+        rows.append(
+            {
+                "file_name": uploaded_file.name,
+                "type": Path(uploaded_file.name).suffix.lower().lstrip(".") or "unknown",
+                "size_kb": round(size_bytes / 1024, 1),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 @st.cache_resource(show_spinner=False)
 def load_knowledge_views():
     return get_knowledge_artifacts(chunks_path=CHUNKS_PATH)
 
 
-def render_retrieval_results(retrieval_results: list[dict]) -> None:
+def render_retrieval_results(retrieval_results: list[dict], key_prefix: str = "retrieval") -> None:
     if not retrieval_results:
         st.info("No retrieval results available.")
         return
@@ -95,11 +158,18 @@ def render_retrieval_results(retrieval_results: list[dict]) -> None:
         )
 
         with st.expander(title):
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Company", row.get("company", "N/A"))
-            col2.metric("Fiscal year", row.get("fiscal_year", "N/A"))
-            col3.metric("Final score", f"{row.get('final_score', row.get('score', 0.0)):.4f}")
-            col4.metric("Knowledge", f"{row.get('knowledge_score', 0.0):.4f}")
+            col1, col2, col3, col4, col5 = st.columns(5)
+            col1.metric(
+                "Source",
+                "Uploaded" if row.get("document_source") == "uploaded" else "Built-in",
+            )
+            col2.metric("Company", row.get("company", "N/A"))
+            col3.metric("Fiscal year", format_optional_year(row.get("fiscal_year")))
+            col4.metric("Final score", f"{row.get('final_score', row.get('score', 0.0)):.4f}")
+            col5.metric("Knowledge", f"{row.get('knowledge_score', 0.0):.4f}")
+
+            if row.get("file_name"):
+                st.caption(f"File: {row.get('file_name')}")
 
             section_group = row.get("section_group")
             section_title = row.get("section_title")
@@ -127,7 +197,7 @@ def render_retrieval_results(retrieval_results: list[dict]) -> None:
                 label=f"Chunk text {idx}",
                 value=row.get("chunk_text", ""),
                 height=220,
-                key=f"chunk_text_{idx}",
+                key=f"{key_prefix}_chunk_text_{idx}",
             )
 
 
@@ -377,7 +447,183 @@ def render_competitors_tab(
     st.dataframe(competitor_mentions_df, use_container_width=True, hide_index=True)
 
 
+def render_session_documents_sidebar() -> list[Any]:
+    """Render the upload controls for session-scoped retrieval documents."""
+    ensure_upload_widget_state()
+
+    st.subheader("Session Documents")
+    st.caption(
+        "Add PDFs, text files, or markdown notes. They are merged into retrieval only for "
+        "this Streamlit session."
+    )
+
+    if st.session_state.get(UPLOAD_CLEAR_NOTICE_STATE, False):
+        st.success("Session documents cleared.")
+        st.session_state[UPLOAD_CLEAR_NOTICE_STATE] = False
+
+    uploaded_files = st.file_uploader(
+        "Add documents to retrieval",
+        type=["pdf", "txt", "md"],
+        accept_multiple_files=True,
+        help="These files are added to the Ask tab retrieval for the current session.",
+        key=f"session_documents_{st.session_state[UPLOAD_WIDGET_KEY_STATE]}",
+    )
+
+    uploaded_summary_df = build_uploaded_files_summary_df(uploaded_files)
+    active_count = len(uploaded_summary_df)
+
+    metric1, metric2 = st.columns(2)
+    metric1.metric("Active docs", active_count)
+    metric2.metric("Formats", "pdf/txt/md")
+
+    if active_count:
+        st.info("Session corpus active for the Ask tab.")
+        st.dataframe(uploaded_summary_df, use_container_width=True, hide_index=True)
+    else:
+        st.caption("No session documents loaded.")
+
+    clear_button = st.button(
+        "Clear session documents",
+        use_container_width=True,
+        disabled=active_count == 0,
+    )
+    if clear_button:
+        st.session_state[UPLOAD_WIDGET_KEY_STATE] += 1
+        st.session_state[UPLOAD_CLEAR_NOTICE_STATE] = True
+        st.rerun()
+
+    st.caption("Explorer tabs keep using the precomputed base corpus views.")
+    return uploaded_files or []
+
+
+def run_assistant_query(
+    question: str,
+    assistant_mode: str,
+    llm_model: str,
+    embedding_model: str,
+    top_k: int,
+    retrieval_mode: str,
+    company_filter: str | None,
+    year_filter: int | None,
+    uploaded_files: list[Any],
+) -> dict[str, Any]:
+    """Run one assistant turn and return the full result payload."""
+    uploaded_payloads = build_uploaded_file_payloads(uploaded_files)
+    runtime_chunks_path = CHUNKS_PATH
+    runtime_chunk_embeddings_path = CHUNK_EMBEDDINGS_PATH
+    persistent_index_mode = "auto"
+    uploaded_runtime_corpus = None
+
+    if uploaded_payloads:
+        uploaded_runtime_corpus = prepare_uploaded_runtime_corpus(
+            base_chunks_path=CHUNKS_PATH,
+            base_chunk_embeddings_path=CHUNK_EMBEDDINGS_PATH,
+            uploaded_files=uploaded_payloads,
+            embedding_model=embedding_model,
+            output_dir=UPLOADED_RUNTIME_DIR,
+        )
+        runtime_chunks_path = uploaded_runtime_corpus.chunks_path
+        runtime_chunk_embeddings_path = uploaded_runtime_corpus.chunk_embeddings_path
+        persistent_index_mode = "source"
+
+    if assistant_mode == "Agent Analyst":
+        result = run_financial_analyst_agent(
+            question=question.strip(),
+            llm_model=llm_model,
+            llm_cache_path=LLM_CACHE_PATH,
+            chunks_path=runtime_chunks_path,
+            chunk_embeddings_path=runtime_chunk_embeddings_path,
+            query_embeddings_path=QUERY_EMBEDDINGS_PATH,
+            knowledge_chunks_path=CHUNKS_PATH,
+            embedding_model=embedding_model,
+            top_k=top_k,
+            retrieval_mode=retrieval_mode,
+            company_filter=company_filter,
+            fiscal_year_filter=year_filter,
+            persistent_index_mode=persistent_index_mode,
+            uploaded_documents_available=bool(uploaded_payloads),
+        )
+    else:
+        result = generate_rag_answer(
+            question=question.strip(),
+            chunks_path=runtime_chunks_path,
+            chunk_embeddings_path=runtime_chunk_embeddings_path,
+            query_embeddings_path=QUERY_EMBEDDINGS_PATH,
+            embedding_model=embedding_model,
+            llm_model=llm_model,
+            top_k=top_k,
+            retrieval_mode=retrieval_mode,
+            llm_cache_path=LLM_CACHE_PATH,
+            company_filter=company_filter,
+            fiscal_year_filter=year_filter,
+            persistent_index_mode=persistent_index_mode,
+        )
+
+    if uploaded_runtime_corpus is not None:
+        result["uploaded_documents"] = uploaded_runtime_corpus.documents
+
+    output_path = OUTPUT_DIR / f"latest_{result.get('mode', 'assistant')}_result.json"
+    output_path.write_text(
+        json.dumps(result, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return result
+
+
+def render_assistant_result_details(
+    result: dict[str, Any],
+    show_retrieval: bool,
+    key_prefix: str,
+) -> None:
+    """Render citations and technical details for one assistant answer."""
+    with st.expander("Sources et details", expanded=False):
+        st.caption(f"Mode: {result.get('mode', 'assistant')}")
+        st.caption(f"Retrieval mode: {result.get('retrieval_mode', 'unknown')}")
+
+        if result.get("citations"):
+            st.markdown("**Citations**")
+            for citation in result["citations"]:
+                st.markdown(f"- `{format_citation(citation)}`")
+        else:
+            st.caption("Aucune citation validee retournee.")
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Top-k", result.get("top_k", "N/A"))
+        col2.metric("Cache LLM", "Yes" if result.get("llm_from_cache") else "No")
+        col3.metric("Company", result.get("company_filter") or "None")
+        col4.metric("Year", result.get("fiscal_year_filter") or "None")
+
+        uploaded_documents = result.get("uploaded_documents", [])
+        if uploaded_documents:
+            st.markdown("**Documents de session utilises**")
+            st.dataframe(
+                pd.DataFrame(uploaded_documents),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        render_safety_flags(result.get("safety_flags", []))
+        render_tool_trace(result.get("tool_calls", []))
+
+        if show_retrieval:
+            render_retrieval_results(
+                result.get("retrieval_results", []),
+                key_prefix=f"{key_prefix}_retrieval",
+            )
+
+        st.download_button(
+            label="Download answer as JSON",
+            data=json.dumps(result, indent=2, ensure_ascii=False),
+            file_name=f"{result.get('mode', 'assistant')}_result.json",
+            mime="application/json",
+            key=f"{key_prefix}_download_json",
+        )
+
+
 def main() -> None:
+    ensure_upload_widget_state()
+    ensure_chat_state()
+
     st.set_page_config(
         page_title="Financial RAG Demo",
         page_icon="F",
@@ -386,8 +632,8 @@ def main() -> None:
 
     st.title("Financial Intelligence Demo")
     st.write(
-        "Ask questions over the 10-K corpus, inspect extracted knowledge, and review "
-        "competitor evidence with source pages."
+        "Ask questions over the 10-K corpus, add your own documents for the current session, "
+        "inspect extracted knowledge, and review competitor evidence with source pages."
     )
 
     knowledge_artifacts = load_knowledge_views()
@@ -427,6 +673,9 @@ def main() -> None:
         st.markdown("---")
         st.caption("Knowledge extraction is used both in retrieval and in the explorer tabs.")
 
+        st.markdown("---")
+        uploaded_files = render_session_documents_sidebar()
+
     company_filter = company_label_to_value(company_label)
     year_filter = year_label_to_value(year_label)
 
@@ -435,104 +684,98 @@ def main() -> None:
     )
 
     with ask_tab:
-        selected_question = st.selectbox(
-            "Sample questions",
-            options=[""] + SAMPLE_QUESTIONS,
-            index=0,
-        )
-
-        question = st.text_area(
-            "Your question",
-            value=selected_question,
-            height=100,
-            placeholder="Type a question about Adobe, Lockheed Martin, or Pfizer...",
-        )
-
-        if company_filter or year_filter:
+        header_col, action_col = st.columns([5, 1])
+        with header_col:
+            st.caption(
+                "Conversation grounded on the local corpus"
+                + (" plus session documents." if uploaded_files else ".")
+            )
             filter_parts = []
             if company_filter:
                 filter_parts.append(f"company={company_filter}")
             if year_filter:
                 filter_parts.append(f"fiscal_year={year_filter}")
-            st.caption("Active retrieval filters: " + " | ".join(filter_parts))
+            if filter_parts:
+                st.caption("Active retrieval filters: " + " | ".join(filter_parts))
+        with action_col:
+            clear_chat = st.button("New chat", use_container_width=True)
+            if clear_chat:
+                st.session_state[CHAT_HISTORY_STATE] = []
+                st.session_state[CHAT_CLEAR_NOTICE_STATE] = True
+                st.rerun()
 
-        run_button = st.button("Run Assistant", type="primary")
+        if st.session_state.get(CHAT_CLEAR_NOTICE_STATE, False):
+            st.success("Conversation cleared.")
+            st.session_state[CHAT_CLEAR_NOTICE_STATE] = False
 
-        if run_button:
-            if not question.strip():
-                st.warning("Please enter a question.")
+        if uploaded_files:
+            st.caption(
+                f"{len(uploaded_files)} session document(s) will also be searched alongside "
+                "the base corpus."
+            )
+
+        if not st.session_state[CHAT_HISTORY_STATE]:
+            st.info("Pose une question en bas de l'ecran pour commencer la conversation.")
+
+        for message_index, message in enumerate(st.session_state[CHAT_HISTORY_STATE]):
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                if message["role"] == "assistant" and "result" in message:
+                    render_assistant_result_details(
+                        result=message["result"],
+                        show_retrieval=show_retrieval,
+                        key_prefix=f"chat_{message_index}",
+                    )
+
+        prompt = st.chat_input(
+            "Pose une question sur les documents...",
+        )
+
+        if prompt:
+            clean_prompt = prompt.strip()
+            if not clean_prompt:
                 st.stop()
 
+            user_message = {"role": "user", "content": clean_prompt}
+            st.session_state[CHAT_HISTORY_STATE].append(user_message)
+
+            with st.chat_message("user"):
+                st.markdown(clean_prompt)
+
             try:
-                with st.spinner("Running retrieval and generation..."):
-                    if assistant_mode == "Agent Analyst":
-                        result = run_financial_analyst_agent(
-                            question=question.strip(),
+                with st.chat_message("assistant"):
+                    with st.spinner("Recherche et generation en cours..."):
+                        result = run_assistant_query(
+                            question=clean_prompt,
+                            assistant_mode=assistant_mode,
                             llm_model=llm_model,
-                            llm_cache_path=LLM_CACHE_PATH,
-                            chunks_path=CHUNKS_PATH,
-                            chunk_embeddings_path=CHUNK_EMBEDDINGS_PATH,
-                            query_embeddings_path=QUERY_EMBEDDINGS_PATH,
                             embedding_model=embedding_model,
                             top_k=top_k,
                             retrieval_mode=retrieval_mode,
                             company_filter=company_filter,
-                            fiscal_year_filter=year_filter,
-                        )
-                    else:
-                        result = generate_rag_answer(
-                            question=question.strip(),
-                            chunks_path=CHUNKS_PATH,
-                            chunk_embeddings_path=CHUNK_EMBEDDINGS_PATH,
-                            query_embeddings_path=QUERY_EMBEDDINGS_PATH,
-                            embedding_model=embedding_model,
-                            llm_model=llm_model,
-                            top_k=top_k,
-                            retrieval_mode=retrieval_mode,
-                            llm_cache_path=LLM_CACHE_PATH,
-                            company_filter=company_filter,
-                            fiscal_year_filter=year_filter,
+                            year_filter=year_filter,
+                            uploaded_files=uploaded_files,
                         )
 
-                st.subheader("Answer")
-                st.write(result["answer"] or "No answer returned.")
+                    answer_text = result.get("answer") or "No answer returned."
+                    st.markdown(answer_text)
+                    render_assistant_result_details(
+                        result=result,
+                        show_retrieval=show_retrieval,
+                        key_prefix=f"chat_{len(st.session_state[CHAT_HISTORY_STATE])}",
+                    )
 
-                st.subheader("Citations")
-                if result["citations"]:
-                    for citation in result["citations"]:
-                        st.markdown(f"- `{format_citation(citation)}`")
-                else:
-                    st.info("No validated citations returned.")
-
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Top-k", result["top_k"])
-                col2.metric("Mode", result.get("mode", assistant_mode))
-                col3.metric("LLM cache hit", "Yes" if result["llm_from_cache"] else "No")
-                col4.metric("Company/year", f"{company_filter or 'None'} / {year_filter or 'None'}")
-                st.caption(f"Retrieval mode: {result.get('retrieval_mode', retrieval_mode)}")
-
-                render_safety_flags(result.get("safety_flags", []))
-                render_tool_trace(result.get("tool_calls", []))
-
-                if show_retrieval:
-                    render_retrieval_results(result["retrieval_results"])
-
-                output_path = OUTPUT_DIR / f"latest_{result.get('mode', 'assistant')}_result.json"
-                output_path.write_text(
-                    json.dumps(result, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
+                st.session_state[CHAT_HISTORY_STATE].append(
+                    {
+                        "role": "assistant",
+                        "content": answer_text,
+                        "result": result,
+                    }
                 )
-
-                st.download_button(
-                    label="Download latest result as JSON",
-                    data=json.dumps(result, indent=2, ensure_ascii=False),
-                    file_name=f"{result.get('mode', 'assistant')}_result.json",
-                    mime="application/json",
-                )
-
             except Exception as exc:
-                st.error("The assistant pipeline failed.")
-                st.exception(exc)
+                with st.chat_message("assistant"):
+                    st.error("The assistant pipeline failed.")
+                    st.exception(exc)
 
     with knowledge_tab:
         render_knowledge_tab(

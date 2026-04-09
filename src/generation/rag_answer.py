@@ -140,6 +140,7 @@ def generate_rag_answer(
     company_filter: str | None = None,
     fiscal_year_filter: int | None = None,
     enable_metadata_filters: bool = True,
+    persistent_index_mode: str = "auto",
 ) -> dict[str, Any]:
     """
     Full RAG generation pipeline.
@@ -181,6 +182,7 @@ def generate_rag_answer(
         company_filter=company_filter,
         fiscal_year_filter=fiscal_year_filter,
         verbose=verbose,
+        persistent_index_mode=persistent_index_mode,
     )
 
     if verbose:

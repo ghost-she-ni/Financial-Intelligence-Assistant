@@ -43,6 +43,9 @@ REQUIRED_CHUNK_COLUMNS = {
 }
 
 OPTIONAL_CHUNK_COLUMNS = {
+    "document_source",
+    "document_type",
+    "file_name",
     "section_id",
     "section_code",
     "section_title",
@@ -1832,6 +1835,10 @@ def build_retrieval_mask(
     """Build a boolean mask for metadata and noise filtering."""
     mask = np.ones(len(metadata_df), dtype=bool)
     filters = {"company": None, "fiscal_year": None}
+    uploaded_mask = np.zeros(len(metadata_df), dtype=bool)
+
+    if "document_source" in metadata_df.columns:
+        uploaded_mask = metadata_df["document_source"].fillna("").eq("uploaded").to_numpy()
 
     if enable_metadata_filters:
         filters = extract_query_filters(query_text)
@@ -1842,12 +1849,14 @@ def build_retrieval_mask(
         filters["fiscal_year"] = fiscal_year_filter
 
     if filters["company"] is not None:
-        mask &= metadata_df["company"].eq(filters["company"]).to_numpy()
+        company_mask = metadata_df["company"].eq(filters["company"]).to_numpy()
+        mask &= (company_mask | uploaded_mask)
 
     if filters["fiscal_year"] is not None and (
         enable_metadata_filters or fiscal_year_filter is not None
     ):
-        mask &= metadata_df["fiscal_year"].eq(filters["fiscal_year"]).to_numpy()
+        fiscal_year_mask = metadata_df["fiscal_year"].eq(filters["fiscal_year"]).to_numpy()
+        mask &= (fiscal_year_mask | uploaded_mask)
 
     if enable_noise_filter:
         if noise_mask is None:

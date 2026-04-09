@@ -24,9 +24,11 @@ class AgentRuntimeConfig:
     chunks_path: Path = PROJECT_ROOT / "data" / "processed" / "chunks.parquet"
     chunk_embeddings_path: Path = PROJECT_ROOT / "data" / "embeddings" / "chunk_embeddings.parquet"
     query_embeddings_path: Path = PROJECT_ROOT / "data" / "embeddings" / "query_embeddings.parquet"
+    knowledge_chunks_path: Path | None = None
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     top_k: int = 5
     retrieval_mode: str = IMPROVED_RETRIEVAL_MODE
+    persistent_index_mode: str = "auto"
 
 
 def normalize_company_key(value: str | None) -> str | None:
@@ -87,6 +89,7 @@ def search_financial_corpus(
         enable_lexical_rerank=True,
         enable_bm25=True,
         enable_reranker=True,
+        persistent_index_mode=runtime_config.persistent_index_mode,
         verbose=False,
     )
 
@@ -97,6 +100,8 @@ def search_financial_corpus(
             "doc_id",
             "company",
             "fiscal_year",
+            "file_name",
+            "document_source",
             "page_start",
             "page_end",
             "section_group",
@@ -133,7 +138,8 @@ def lookup_knowledge_graph(
     max_rows: int = 10,
 ) -> dict[str, Any]:
     """Inspect extracted entities and relationships for a company/year slice."""
-    knowledge_artifacts = get_knowledge_artifacts(chunks_path=runtime_config.chunks_path)
+    knowledge_chunks_path = runtime_config.knowledge_chunks_path or runtime_config.chunks_path
+    knowledge_artifacts = get_knowledge_artifacts(chunks_path=knowledge_chunks_path)
     entities_df = knowledge_artifacts.entities_df.copy()
     triplets_df = knowledge_artifacts.triplets_df.copy()
 
@@ -203,7 +209,8 @@ def get_competitor_evidence(
     top_n: int = 8,
 ) -> dict[str, Any]:
     """Return competitor summaries and evidence rows derived from extracted knowledge."""
-    knowledge_artifacts = get_knowledge_artifacts(chunks_path=runtime_config.chunks_path)
+    knowledge_chunks_path = runtime_config.knowledge_chunks_path or runtime_config.chunks_path
+    knowledge_artifacts = get_knowledge_artifacts(chunks_path=knowledge_chunks_path)
     summary_df = knowledge_artifacts.competitor_summary_clean_df.copy()
     mentions_df = knowledge_artifacts.competitor_mentions_df.copy()
 
@@ -270,7 +277,7 @@ def build_local_tool_specs() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "search_financial_corpus",
-                "description": "Search the local financial filing corpus and return the most relevant chunks with source metadata.",
+                "description": "Search the local financial filing corpus, including session uploads when available, and return the most relevant chunks with source metadata.",
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -86,6 +86,9 @@ def run_financial_analyst_agent(
     top_k: int = 5,
     company_filter: str | None = None,
     fiscal_year_filter: int | None = None,
+    knowledge_chunks_path: Path | None = None,
+    persistent_index_mode: str = "auto",
+    uploaded_documents_available: bool = False,
     max_tool_calls: int = 3,
     llm_client: Any | None = None,
 ) -> dict[str, Any]:
@@ -94,9 +97,11 @@ def run_financial_analyst_agent(
         chunks_path=chunks_path,
         chunk_embeddings_path=chunk_embeddings_path,
         query_embeddings_path=query_embeddings_path,
+        knowledge_chunks_path=knowledge_chunks_path,
         embedding_model=embedding_model,
         top_k=top_k,
         retrieval_mode=retrieval_mode,
+        persistent_index_mode=persistent_index_mode,
     )
     tool_specs = build_local_tool_specs()
     tool_registry = build_local_tool_registry(runtime_config)
@@ -117,6 +122,7 @@ def run_financial_analyst_agent(
                 question=question,
                 company_filter=company_filter,
                 fiscal_year_filter=fiscal_year_filter,
+                uploaded_documents_available=uploaded_documents_available,
             ),
         },
     ]

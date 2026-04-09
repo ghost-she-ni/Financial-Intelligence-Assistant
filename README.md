@@ -177,6 +177,16 @@ python -m scripts.run_pipeline --dry-run
 python -m scripts.run_pipeline --from-phase evaluation --to-phase metrics
 ```
 
+### Why The Full Pipeline Takes Time
+
+`python -m scripts.run_pipeline` runs the whole research workflow, not just one RAG answer. By default it launches 18 sequential steps covering preprocessing, embedding/index construction, entity extraction, triplet extraction, competitor analysis, FinanceBench preparation, then evaluation, judge, and metrics for all three retrieval modes: `classical_ml`, `naive`, and `improved`.
+
+The heaviest cost on a cold run is the chunk-level extraction work. In the current project snapshot, the corpus produces about `1.9k` chunks, and both entity extraction and triplet extraction run in `all` mode. That means the first complete run can trigger roughly `3.7k` LLM extraction requests before the evaluation phase even starts.
+
+The later stages also multiply runtime on purpose because the project compares retrieval strategies instead of measuring only one setup. Even with the default `local_smoke` split, evaluation and judge are repeated for each retrieval mode, and switching to the larger `core40` benchmark increases the number of retrieval, generation, and judgment calls significantly.
+
+The pipeline is intentionally sequential, checkpointed, and reproducible, so it saves intermediate artifacts often instead of optimizing only for raw speed. Reruns are usually much faster thanks to embedding caches, the JSONL LLM cache, and resume logic in extraction, evaluation, and judge. The first end-to-end run is therefore expected to be the slowest.
+
 ### LLM-As-A-Judge
 
 ```powershell

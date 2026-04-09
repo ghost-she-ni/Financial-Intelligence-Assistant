@@ -81,6 +81,7 @@ def build_agent_user_prompt(
     question: str,
     company_filter: str | None = None,
     fiscal_year_filter: int | None = None,
+    uploaded_documents_available: bool = False,
 ) -> str:
     """Build the user prompt for the local tool-using analyst agent."""
     filter_lines: list[str] = []
@@ -90,8 +91,10 @@ def build_agent_user_prompt(
         filter_lines.append(f"fiscal_year_filter: {fiscal_year_filter}")
 
     filter_block = "\n".join(filter_lines) if filter_lines else "company_filter: none\nfiscal_year_filter: none"
+    uploaded_context = "yes" if uploaded_documents_available else "no"
     return (
         f"USER QUESTION:\n{question}\n\n"
         f"REQUEST FILTERS:\n{filter_block}\n\n"
+        f"RUNTIME CONTEXT:\nuploaded_documents_available: {uploaded_context}\n\n"
         "Decide whether you need local tools. If needed, call them first; otherwise return the final JSON answer."
     )
