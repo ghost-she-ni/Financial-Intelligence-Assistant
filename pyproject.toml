@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "financial-rag-llm-judge"
+version = "0.1.0"
+description = "Financial-document RAG pipeline with retrieval, extraction, and LLM evaluation utilities."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "nltk>=3.9,<4",
+  "numpy>=1.26,<3",
+  "openai>=2.0,<3",
+  "pandas>=2.2,<3",
+  "pyarrow>=16,<25",
+  "PyMuPDF>=1.24,<2",
+  "python-dotenv>=1.0,<2",
+  "sentence-transformers>=3,<6",
+  "streamlit>=1.35,<2",
+  "tenacity>=8.2,<10",
+  "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.6,<1",
+]
+faiss = [
+  "faiss-cpu>=1.8,<2",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "integration: tests that call external APIs or depend on external services",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["data", "outputs", "notebooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E402", "E501"]
