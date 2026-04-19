@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import sys
@@ -17,6 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SOURCE_URL = (
     "https://huggingface.co/datasets/PatronusAI/financebench/raw/main/financebench_merged.jsonl"
 )
+DEFAULT_SOURCE_SHA256 = "7a1c81789e0fd2f1c37057a7ec0097756d726b05e7228e68e57db8e18c54fd0b"
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "evaluation" / "financebench"
 DEFAULT_RAW_PATH = DEFAULT_DATA_DIR / "raw" / "financebench_merged.jsonl"
 DEFAULT_FULL_OUTPUT_PATH = DEFAULT_DATA_DIR / "financebench_full.parquet"
@@ -189,6 +191,30 @@ def download_source_jsonl(source_url: str, destination_path: Path, force: bool =
 
     logger.info("Downloaded FinanceBench raw file to: %s", destination_path.resolve())
     return destination_path
+
+
+def compute_file_sha256(path: Path) -> str:
+    """Compute a SHA256 digest for the downloaded FinanceBench source file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_source_checksum(raw_path: Path, expected_sha256: str) -> str:
+    """Verify that the raw FinanceBench file matches the pinned checksum."""
+    normalized_expected = expected_sha256.strip().lower()
+    if not normalized_expected:
+        return ""
+
+    actual_sha256 = compute_file_sha256(raw_path)
+    if actual_sha256 != normalized_expected:
+        raise ValueError(
+            f"FinanceBench checksum mismatch for {raw_path}: "
+            f"expected {normalized_expected}, got {actual_sha256}"
+        )
+    return actual_sha256
 
 
 def load_financebench_records(raw_path: Path) -> list[dict]:
@@ -641,6 +667,12 @@ def main() -> None:
         help="Source URL for the FinanceBench raw JSONL file.",
     )
     parser.add_argument(
+        "--source_sha256",
+        type=str,
+        default=DEFAULT_SOURCE_SHA256,
+        help="Expected SHA256 checksum for the raw JSONL source.",
+    )
+    parser.add_argument(
         "--raw_path",
         type=str,
         default=str(DEFAULT_RAW_PATH),
@@ -687,6 +719,11 @@ def main() -> None:
         help="Fail instead of downloading when the raw JSONL is missing.",
     )
     parser.add_argument(
+        "--skip_source_checksum",
+        action="store_true",
+        help="Skip SHA256 verification of the raw FinanceBench source file.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose logging.",
@@ -723,6 +760,11 @@ def main() -> None:
             destination_path=raw_path,
             force=True,
         )
+
+    if not args.skip_source_checksum:
+        verified_sha256 = verify_source_checksum(raw_path, args.source_sha256)
+        if verified_sha256:
+            logger.info("Verified FinanceBench raw SHA256: %s", verified_sha256)
 
     records = load_financebench_records(raw_path)
     full_df = normalize_financebench_records(records)

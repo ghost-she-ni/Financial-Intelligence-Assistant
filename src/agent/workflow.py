@@ -16,8 +16,8 @@ from src.agent.tools import (
     build_local_tool_specs,
     parse_tool_arguments,
 )
-from src.common.guardrails import build_safety_flags
 from src.common.grounded_qa import build_context_block, normalize_citations
+from src.common.guardrails import build_safety_flags
 from src.common.prompting import build_agent_system_prompt, build_agent_user_prompt
 from src.generation.rag_answer import DEFAULT_LLM_MODEL
 from src.llm.client import LLMClient

@@ -100,6 +100,24 @@ Tracked metrics include:
 
 ## Setup
 
+Validated Python version:
+
+```powershell
+python --version
+# Python 3.12.2
+```
+
+Reproducible install from the audited lock file:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements/lock.txt
+```
+
+Lightweight development install:
+
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -125,7 +143,29 @@ Expected variables:
 - `OPENAI_BASE_URL` (optional)
 - `RUN_LIVE_LLM_TESTS` (optional)
 
+## Reproducibility Check
+
+Run the local audit helper before demos or grading:
+
+```powershell
+python -m scripts.verify_reproducibility
+python -m scripts.verify_reproducibility --require-generated
+```
+
+The default check verifies versioned inputs, checksums, the lock file, Python/package versions, and the 19-step pipeline plan. It warns when generated local artifacts are missing. Use `--require-generated` after running the pipeline to make missing artifacts fail the check.
+
+Versioned inputs include the 9 raw PDFs, `data/queries/queries.parquet`, and `data/evaluation/security/security_cases.csv`. Generated artifacts under `data/metadata/`, `data/extracted/`, `data/processed/`, `data/embeddings/`, `data/indexes/`, `data/cache/`, and `outputs/` are intentionally not committed and must be regenerated locally. The FinanceBench loader verifies the downloaded raw JSONL against a pinned SHA256 checksum before producing subsets.
+
 ## Run The App
+
+The Streamlit app expects generated chunk, embedding, entity, triplet, and retrieval artifacts. On a clean clone, run the pipeline first:
+
+```powershell
+python -m scripts.run_pipeline --from-phase preparation --to-phase extraction
+python -m scripts.run_pipeline --from-phase financebench --to-phase financebench
+```
+
+Then start the app:
 
 ```powershell
 .venv\Scripts\streamlit run app/streamlit_app.py
@@ -179,13 +219,13 @@ python -m scripts.run_pipeline --from-phase evaluation --to-phase metrics
 
 ### Why The Full Pipeline Takes Time
 
-`python -m scripts.run_pipeline` runs the whole research workflow, not just one RAG answer. By default it launches 18 sequential steps covering preprocessing, embedding/index construction, entity extraction, triplet extraction, competitor analysis, FinanceBench preparation, then evaluation, judge, and metrics for all three retrieval modes: `classical_ml`, `naive`, and `improved`.
+`python -m scripts.run_pipeline` runs the whole research workflow, not just one RAG answer. By default it launches 19 sequential steps covering preprocessing, embedding/index construction, entity extraction, triplet extraction, competitor analysis, FinanceBench preparation, then evaluation, judge, and metrics for all three retrieval modes: `classical_ml`, `naive`, and `improved`.
 
 The heaviest cost on a cold run is the chunk-level extraction work. In the current project snapshot, the corpus produces about `1.9k` chunks, and both entity extraction and triplet extraction run in `all` mode. That means the first complete run can trigger roughly `3.7k` LLM extraction requests before the evaluation phase even starts.
 
 The later stages also multiply runtime on purpose because the project compares retrieval strategies instead of measuring only one setup. Even with the default `local_smoke` split, evaluation and judge are repeated for each retrieval mode, and switching to the larger `core40` benchmark increases the number of retrieval, generation, and judgment calls significantly.
 
-The pipeline is intentionally sequential, checkpointed, and reproducible, so it saves intermediate artifacts often instead of optimizing only for raw speed. Reruns are usually much faster thanks to embedding caches, the JSONL LLM cache, and resume logic in extraction, evaluation, and judge. The first end-to-end run is therefore expected to be the slowest.
+The pipeline is intentionally sequential and checkpointed, so it saves intermediate artifacts often instead of optimizing only for raw speed. Reruns are usually much faster thanks to embedding caches, the JSONL LLM cache, and resume logic in extraction, evaluation, and judge. These caches are local and ignored by Git; reproducibility from a clean clone means regenerating them with the documented commands, not committing the cache contents.
 
 ### LLM-As-A-Judge
 
@@ -209,6 +249,8 @@ Default security outputs are written to:
 
 - `outputs/security_eval/rag/`
 - `outputs/security_eval/agent/`
+
+Those outputs are generated local artifacts and are ignored by Git. The benchmark input file is versioned; the run results are regenerated as needed.
 
 ## Evaluation Criteria Mapping
 
@@ -250,7 +292,8 @@ Default security outputs are written to:
 Run the suite with:
 
 ```powershell
-.venv\Scripts\pytest -q
+.venv\Scripts\pytest -q -rs
+.venv\Scripts\ruff check .
 ```
 
 The test suite covers:
@@ -268,6 +311,8 @@ The test suite covers:
 - security evaluation uses a compact benchmark, not a production red-team corpus
 - bias handling is evaluated through guardrails and neutral wording, not through a full fairness benchmark
 - live LLM quality still depends on the selected model and API availability
+- LLM outputs are not bit-for-bit reproducible unless replayed from a local cache; caches are intentionally not committed
+- the default `local_smoke` FinanceBench subset has only 3 questions, while `core40` needs filings beyond the local 9-PDF corpus
 
 ## Submission Assets
 

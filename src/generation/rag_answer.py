@@ -10,13 +10,13 @@ from typing import Any
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 
-from src.common.guardrails import build_safety_flags
 from src.common.grounded_qa import (
     build_context_block,
     build_system_prompt,
     build_user_prompt,
     normalize_citations,
 )
+from src.common.guardrails import build_safety_flags
 from src.embeddings.cache import (
     append_records_to_cache,
     build_query_embedding_record,

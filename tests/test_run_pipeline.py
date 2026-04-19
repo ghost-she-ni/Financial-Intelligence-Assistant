@@ -16,6 +16,7 @@ SPEC.loader.exec_module(RUN_PIPELINE)
 def test_select_pipeline_steps_defaults_to_full_pipeline() -> None:
     steps = RUN_PIPELINE.select_pipeline_steps()
 
+    assert len(steps) == 19
     assert steps[0].module_name == "scripts.run_ingestion"
     assert steps[-1].module_name == "scripts.run_metrics"
     assert [step.args for step in steps if step.module_name == "scripts.run_evaluation_pipeline"] == [

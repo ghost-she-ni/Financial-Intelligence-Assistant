@@ -14,6 +14,7 @@ Show that the system is:
 Run:
 
 ```powershell
+python -m scripts.verify_reproducibility --require-generated
 .venv\Scripts\streamlit run app/streamlit_app.py
 ```
 
@@ -87,7 +88,8 @@ python -m scripts.run_security_eval --mode both
 What to say:
 
 - the repository includes a versioned benchmark for hallucination, injection, and bias
-- the benchmark exports reproducible artifacts under `outputs/security_eval/`
+- the benchmark regenerates local artifacts under `outputs/security_eval/`
+- generated outputs are ignored by Git; the versioned source of truth is the cases file plus the pipeline code
 
 ## Closing Message
 

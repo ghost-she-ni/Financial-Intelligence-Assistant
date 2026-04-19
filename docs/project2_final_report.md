@@ -116,13 +116,13 @@ This makes the system do more than chat: it can actively inspect retrieval evide
 
 ### 4.6 Why The Full Pipeline Takes Time
 
-The full pipeline is deliberately broader than a single question-answering run. The orchestration script executes 18 sequential steps: document preparation, embedding and index construction, knowledge extraction, FinanceBench preparation, then evaluation, judge, and metrics for `classical_ml`, `naive`, and `improved`.
+The full pipeline is deliberately broader than a single question-answering run. The orchestration script executes 19 sequential steps: document preparation, embedding and index construction, knowledge extraction, FinanceBench preparation, then evaluation, judge, and metrics for `classical_ml`, `naive`, and `improved`.
 
 The most expensive part of a cold run is knowledge extraction. In the current repository snapshot, the corpus yields about `1.9k` chunks. Because both entity extraction and triplet extraction run in `all` mode, the initial end-to-end execution can require roughly `3.7k` chunk-level LLM requests before benchmark evaluation even begins.
 
-The evaluation phase also expands runtime by design. The project compares three retrieval strategies, so retrieval, answer generation, and answer judging are repeated per mode instead of being run only once. The default `local_smoke` subset keeps this manageable for debugging, while the larger `core40` subset makes runtime noticeably longer.
+The evaluation phase also expands runtime by design. The project compares three retrieval strategies, so retrieval, answer generation, and answer judging are repeated per mode instead of being run only once. The default `local_smoke` subset currently contains 3 questions and keeps debugging manageable, while the larger `core40` subset requires 11 source filings and makes runtime noticeably longer.
 
-Finally, the implementation favors reproducibility and resumability over raw speed. Intermediate artifacts are checkpointed, outputs are versioned, and caches are reused on later runs. This makes the first full run the slowest one, while subsequent runs are usually faster if embeddings, extracted artifacts, and LLM responses are already cached.
+Finally, the implementation favors reproducibility and resumability over raw speed. Versioned inputs are checksummed, the FinanceBench raw download is verified against a pinned SHA256 digest, intermediate artifacts are checkpointed locally, and caches are reused on later runs. Generated artifacts and LLM caches are intentionally ignored by Git, so a clean clone reproduces the workflow by regenerating them rather than by reusing committed outputs. This makes the first full run the slowest one, while subsequent runs are usually faster if embeddings, extracted artifacts, and LLM responses are already cached.
 
 ## 5. Prompt Engineering
 
@@ -229,7 +229,7 @@ To make the report compliant with the rubric, the project now includes a dedicat
 
 ### 8.1 Benchmark Dataset
 
-The versioned file `data/evaluation/security/security_cases.csv` contains test cases across three categories:
+The versioned file `data/evaluation/security/security_cases.csv` contains test cases across three categories. The generated benchmark outputs are written under `outputs/security_eval/` and are intentionally not committed.
 
 - `hallucination`
 - `prompt_injection`

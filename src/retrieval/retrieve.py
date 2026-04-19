@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -163,7 +164,7 @@ TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9'\-]*")
 
 BM25_K1 = 1.5
 BM25_B = 0.75
-PERSISTENT_INDEX_FORMAT_VERSION = 2
+PERSISTENT_INDEX_FORMAT_VERSION = 3
 NATIVE_DENSE_BACKEND = "native_dense"
 FAISS_BACKEND = "faiss_flat_ip"
 CLASSICAL_ML_RETRIEVAL_MODE = "classical_ml"
@@ -341,6 +342,52 @@ def get_file_signature(path: Path) -> tuple[str, int, int]:
     return str(resolved_path), stat.st_mtime_ns, stat.st_size
 
 
+def find_project_root(start_path: Path) -> Path | None:
+    """Find the nearest parent directory that looks like the project root."""
+    resolved_start = start_path.resolve()
+    candidates = [resolved_start] if resolved_start.is_dir() else [resolved_start.parent]
+    candidates.extend(candidates[0].parents)
+    for candidate in candidates:
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    return None
+
+
+def get_portable_path(path: Path) -> str:
+    """Return a project-relative path when possible, otherwise a POSIX path string."""
+    resolved_path = path.resolve()
+    project_root = find_project_root(resolved_path)
+    if project_root is None:
+        return resolved_path.as_posix()
+
+    try:
+        return resolved_path.relative_to(project_root).as_posix()
+    except ValueError:
+        return resolved_path.as_posix()
+
+
+def compute_file_sha256(path: Path) -> str:
+    """Compute a SHA256 digest for a file without relying on platform metadata."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def get_portable_file_signature(path: Path) -> dict[str, int | str]:
+    """Return a portable content signature for persisted reproducibility manifests."""
+    resolved_path = path.resolve()
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"File does not exist: {resolved_path}")
+
+    return {
+        "path": get_portable_path(resolved_path),
+        "sha256": compute_file_sha256(resolved_path),
+        "size": int(resolved_path.stat().st_size),
+    }
+
+
 def sanitize_artifact_component(value: str) -> str:
     """Convert an identifier such as an embedding model name into a safe path component."""
     sanitized = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
@@ -406,22 +453,9 @@ def build_source_signature_payload(
     chunk_embeddings_path: Path,
 ) -> dict[str, dict[str, int | str]]:
     """Capture the source files that define a chunk index build."""
-    chunk_path_str, chunk_mtime_ns, chunk_size = get_file_signature(chunks_path)
-    embedding_path_str, embedding_mtime_ns, embedding_size = get_file_signature(
-        chunk_embeddings_path
-    )
-
     return {
-        "chunks": {
-            "path": chunk_path_str,
-            "mtime_ns": int(chunk_mtime_ns),
-            "size": int(chunk_size),
-        },
-        "chunk_embeddings": {
-            "path": embedding_path_str,
-            "mtime_ns": int(embedding_mtime_ns),
-            "size": int(embedding_size),
-        },
+        "chunks": get_portable_file_signature(chunks_path),
+        "chunk_embeddings": get_portable_file_signature(chunk_embeddings_path),
     }
 
 

@@ -10,7 +10,10 @@ build/
 dist/
 htmlcov/
 data/cache/
-data/evaluation/
+data/evaluation/*
+!data/evaluation/security/
+data/evaluation/security/*
+!data/evaluation/security/security_cases.csv
 data/indexes/
 data/embeddings/
 data/extracted/

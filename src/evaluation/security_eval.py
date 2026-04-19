@@ -17,7 +17,11 @@ from src.common.guardrails import (
 )
 from src.common.io import now_utc_iso, read_table
 from src.evaluation.judge import judge_answer_support
-from src.generation.rag_answer import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, generate_rag_answer
+from src.generation.rag_answer import (
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_LLM_MODEL,
+    generate_rag_answer,
+)
 
 logger = logging.getLogger(__name__)
 

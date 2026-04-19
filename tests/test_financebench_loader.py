@@ -1,16 +1,35 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from src.evaluation.financebench_loader import (
     LOCAL_SMOKE_SCOPE,
     build_readme_text,
+    compute_file_sha256,
     extract_local_smoke_scope_pairs,
     format_company_year_scope,
     normalize_financebench_records,
     select_local_smoke_subset,
     select_subset_by_doc_limits,
+    verify_source_checksum,
 )
+
+
+def test_verify_source_checksum_accepts_matching_digest(tmp_path) -> None:
+    raw_path = tmp_path / "financebench.jsonl"
+    raw_path.write_text('{"id": 1}\n', encoding="utf-8")
+    expected_sha256 = compute_file_sha256(raw_path)
+
+    assert verify_source_checksum(raw_path, expected_sha256) == expected_sha256
+
+
+def test_verify_source_checksum_rejects_mismatch(tmp_path) -> None:
+    raw_path = tmp_path / "financebench.jsonl"
+    raw_path.write_text('{"id": 1}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        verify_source_checksum(raw_path, "0" * 64)
 
 
 def test_normalize_financebench_records_extracts_expected_fields() -> None:
